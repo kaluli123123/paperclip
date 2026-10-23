@@ -72,7 +72,7 @@ for (const [label, engines, expected] of [
     manifest("packages/paperclip-runner/package.json", { name: "@paperclipai/paperclip-runner", engines });
     const result = run();
     assert.equal(result.status, 1, result.stderr);
-    assert.ok(result.stderr.includes(`packages/paperclip-runner/package.json: engines.node must be >=24.11.0, found ${expected}`));
+    assert.ok(result.stderr.includes(`${join("packages/paperclip-runner/package.json")}: engines.node must be >=24.11.0, found ${expected}`));
   });
 }
 
@@ -86,7 +86,7 @@ for (const filePath of [
     manifest(filePath, { name: "first-party-fixture" });
     const result = run();
     assert.equal(result.status, 1, result.stderr);
-    assert.ok(result.stderr.includes(`${filePath}: engines.node must be >=24.11.0, found missing`));
+    assert.ok(result.stderr.includes(`${join(filePath)}: engines.node must be >=24.11.0, found missing`));
   });
 }
 
