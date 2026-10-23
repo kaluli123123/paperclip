@@ -35,7 +35,7 @@ it("round-trips Git history with trailing-X-only temporary file allocation", asy
   await git(localDir, "init", "-b", "main");
   await writeFile(path.join(localDir, "tracked.txt"), "before\n");
   await git(localDir, "add", "tracked.txt");
-  await git(localDir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial fixture");
+  await git(localDir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Initial fixture");
   const initialCommit = await git(localDir, "rev-parse", "HEAD");
   const spec = {
     host: "fixture.invalid", username: "fixture", port: 22,
@@ -48,7 +48,7 @@ it("round-trips Git history with trailing-X-only temporary file allocation", asy
   expect(await readdir(path.join(remoteDir, ".paperclip-runtime"))).toEqual([]);
   await writeFile(path.join(remoteDir, "tracked.txt"), "after\n");
   await git(remoteDir, "add", "tracked.txt");
-  await git(remoteDir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Remote fixture change");
+  await git(remoteDir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "Remote fixture change");
   const remoteCommit = await git(remoteDir, "rev-parse", "HEAD");
   await restoreWorkspaceFromSshExecution({ spec, localDir, remoteDir, restoreGitHistory: true });
   expect(await git(localDir, "rev-parse", "HEAD")).toBe(remoteCommit);
