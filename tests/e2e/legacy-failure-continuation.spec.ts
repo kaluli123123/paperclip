@@ -92,8 +92,17 @@ for (const action of ["task_retry", "retry_after_reload", "inbox_retry", "messag
         await expect(page.getByRole("button", { name: "Steer", exact: true })).toHaveCount(0);
         const retry = page.getByRole("button", { name: "Retry", exact: true });
         await expect(retry).toBeEnabled();
+        const [response] = await Promise.all([
+          page.waitForResponse((response) => {
+            const request = response.request();
+            return request.method() === "POST"
+              && new URL(response.url()).pathname.endsWith(`/issues/${issue.id}/retry`)
+              && request.postDataJSON()?.observedRunId === sourceRunId;
+          }),
+          retry.click(),
+        ]);
+        expect(response.status(), await response.text()).toBe(202);
         await db.update(heartbeatRuns).set({ processPid: 999999999 }).where(eq(heartbeatRuns.id, sourceRunId));
-        await retry.click();
       } else if (action === "automatic_message") {
         // No Retry, duplicate message, or status change: the saved input runs.
       } else if (action === "message") {
