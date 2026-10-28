@@ -1,14 +1,16 @@
 import { pendingTaskRepository } from "../task-workspace-tools.js";
+import { onboardingFirstTaskCompletionAllowed } from "../onboarding-first-task-admission.js";
 import { eligibleIssueMonitorWait } from "../issue-monitors.js";
 import { assertNativeCaseHandoffResult } from "./native-case-handoff.js";
 import { activeIssueInteractionCondition, ordinaryQuestionCondition } from "../issue-question-context.js";
 import { publishedTaskDocuments, validateNativeDeliverableEvidence } from "./native-deliverable-feedback.js";
 import { findAutomaticCompletionReviews } from "./automatic-completion-reviews.js";
+import { findSupersededExternalReviewRequests } from "./superseded-external-review-requests.js";
 import { evaluateAgentInvokabilityFromDb } from "../agent-invokability.js";
 import { issueService } from "../issues.js";
 import { isConversation } from "../agent-conversations.js";
 import { issueTreeControlService } from "../issue-tree-control.js";
-import { resolveExternalChatResponseWaitAuthorization } from "./chat-attachment-reuse.js";
+import { isPublishedGitHubReviewCompletionContinuation, readPublishedGitHubReviewCompletionContinuation, resolveExternalChatResponseWaitAuthorization } from "./chat-attachment-reuse.js";
 import { getNativeReviewAssignment, readNativeReviewAssignmentContext } from "./native-review-participant.js";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
 import {
@@ -67,6 +69,12 @@ export async function nativeCompletionFeedback(
     )
     .then((rows) => rows[0]);
   if (!issue) throw new Error("Completion task no longer exists.");
+  if (result.reportedWorkDisposition === "yielded" && isPublishedGitHubReviewCompletionContinuation(result.continuation)) {
+    const current = await readPublishedGitHubReviewCompletionContinuation({ db,
+      binding: { companyId: run.companyId, issueId: issue.id, runId, agentId: run.agentId } });
+    if (!current || current.idempotencyKey !== result.continuation!.idempotencyKey)
+      throw new Error("The published GitHub review wait is no longer authorized for this run. Reassess current task state without repeating the published review.");
+  }
   const acceptedHandoff = await assertNativeCaseHandoffResult(db, runId, issue.id, result);
   if (acceptedHandoff) return "The persisted case handoff controls this turn. End the turn; the task remains open for its next agent.";
   const reviewContext = readNativeReviewAssignmentContext(run.contextSnapshot);
@@ -133,13 +141,25 @@ export async function nativeCompletionFeedback(
   if (issue.executionRunId && issue.executionRunId !== runId) {
     return "Report accepted; a newer run owns the task. Do not claim this report changed its status.";
   }
+  if (result.reportedWorkDisposition === "done" && !await onboardingFirstTaskCompletionAllowed(db, {
+    companyId: run.companyId, issueId: issue.id, runId,
+  })) {
+    throw new Error("First-task proposal requires a persisted human decision before completing onboarding. The opening answer supplies scope, not approval. Present the proposal and keep this task in_review until the human accepts or rejects it; acknowledge a rejection without executing that work.");
+  }
   const continuation = run.contextSnapshot?.executionContinuation as { objective?: unknown } | undefined;
   const objective = typeof continuation?.objective === "string"
     ? continuation.objective : [issue.title, issue.description].filter(Boolean).join("\n");
   await validateNativeDeliverableEvidence(db, { companyId: run.companyId, issueId: issue.id, runId,
     objective, semanticToolReceipts: run.resultJson?.semanticToolReceipts }, result);
+  const canSupersedeReview = result.reportedWorkDisposition === "done" ||
+    (result.reportedWorkDisposition === "yielded" && (result.continuation?.kind === "monitor" ||
+      (result.continuation?.kind === "response_wake" && await resolveExternalChatResponseWaitAuthorization({
+        db, binding: { companyId: run.companyId, issueId: issue.id, runId, agentId: run.agentId },
+      }) === "authorized")));
+  const superseded = canSupersedeReview && signals.actionableAttentionRequests.length === 0
+    ? await findSupersededExternalReviewRequests(db, { companyId: run.companyId, issueId: issue.id, runId, agentId: run.agentId }) : [];
   const retiredCandidates = await findAutomaticCompletionReviews(db, issue.id);
-  const retiredIds = retiredCandidates.map(({ interaction }) => interaction.id);
+  const retiredIds = [...retiredCandidates, ...superseded].map(({ interaction }) => interaction.id);
   const [interaction, approval] = await Promise.all([
     db
       .select({
